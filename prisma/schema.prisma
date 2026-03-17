@@ -1,0 +1,286 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  USER
+  PLATFORM_ADMIN
+}
+
+enum BillStatus {
+  DRAFT
+  SCHEDULED
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum BillSourceType {
+  MANUAL
+  EMAIL_TEXT
+  PDF_UPLOAD
+  INBOUND_EMAIL
+}
+
+enum ReminderChannel {
+  EMAIL
+}
+
+enum ReminderStatus {
+  PENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+enum ParseJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REJECTED
+}
+
+enum ParseInputType {
+  TEXT
+  PDF
+  EMAIL
+}
+
+// ---------------------------------------------------------------------------
+// Better Auth (Prisma adapter)
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean
+  image         String?
+  role          UserRole  @default(USER)
+  createdAt     DateTime
+  updatedAt     DateTime
+  sessions      Session[]
+  accounts      Account[]
+  workspacesOwned Workspace[] @relation("WorkspaceOwner")
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime
+  updatedAt DateTime
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime
+  updatedAt             DateTime
+
+  @@map("account")
+}
+
+model Verification {
+  id         String    @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime?
+  updatedAt  DateTime?
+
+  @@map("verification")
+}
+
+// ---------------------------------------------------------------------------
+// Billingly app models
+// ---------------------------------------------------------------------------
+
+model Workspace {
+  id           String   @id @default(cuid())
+  name         String
+  slug         String   @unique
+  ownerUserId  String
+  owner        User     @relation("WorkspaceOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  timezone     String   @default("Australia/Melbourne")
+  createdAt    DateTime
+  updatedAt    DateTime
+  settings     WorkspaceSettings?
+  bills        Bill[]
+  reminders    Reminder[]
+  parseJobs    ParseJob[]
+  attachments  Attachment[]
+
+  @@index([ownerUserId])
+  @@map("workspace")
+}
+
+model WorkspaceSettings {
+  id                   String   @id @default(cuid())
+  workspaceId          String   @unique
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  defaultReminderDays  Int[]    @default([7, 1, 0])
+  reminderEmailEnabled  Boolean  @default(true)
+  createdAt            DateTime
+  updatedAt            DateTime
+
+  @@map("workspace_settings")
+}
+
+model Bill {
+  id                  String         @id @default(cuid())
+  workspaceId         String
+  workspace           Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdByUserId     String?
+  sourceType          BillSourceType
+  status              BillStatus     @default(DRAFT)
+  billerName          String?
+  category            String?
+  // Draft-first: amount can be null while parsing
+  amount              Decimal?       @db.Decimal(12, 2)
+  currency            String         @default("AUD")
+  dueDate             DateTime?
+  issueDate           DateTime?
+  referenceNumber     String?
+  invoiceNumber       String?
+  paymentMethod       String?
+  paymentInstructions String?
+  paymentUrl          String?
+  notes               String?
+  recurrenceRule      String?
+  aiConfidence        Decimal?       @db.Decimal(5, 4)
+  isRecurring         Boolean        @default(false)
+  paidAt              DateTime?
+  createdAt           DateTime
+  updatedAt           DateTime
+  source              BillSource?
+  reminders           Reminder[]
+  paymentRecords      PaymentRecord[]
+  attachments         Attachment[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([dueDate])
+  @@map("bill")
+}
+
+model BillSource {
+  id                 String   @id @default(cuid())
+  billId             String   @unique
+  bill               Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+  rawSubject         String?
+  rawBody            String?  @db.Text
+  senderEmail        String?
+  senderName         String?
+  sourceHash         String?
+  originalMessageId  String?
+  parserVersion     String?
+  parsedAt           DateTime?
+  extractionJson     String?  @db.Text
+  createdAt          DateTime
+
+  @@map("bill_source")
+}
+
+model Reminder {
+  id          String          @id @default(cuid())
+  workspaceId String
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  billId      String
+  bill        Bill            @relation(fields: [billId], references: [id], onDelete: Cascade)
+  channel     ReminderChannel @default(EMAIL)
+  remindAt    DateTime
+  status      ReminderStatus  @default(PENDING)
+  sentAt      DateTime?
+  errorMessage String?
+  createdAt   DateTime
+  updatedAt   DateTime
+
+  @@index([workspaceId])
+  @@index([billId])
+  @@index([remindAt, status])
+  @@map("reminder")
+}
+
+model PaymentRecord {
+  id         String   @id @default(cuid())
+  billId     String
+  bill       Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+  amountPaid Decimal  @db.Decimal(12, 2)
+  paidAt     DateTime
+  method    String?
+  note      String?
+  createdAt  DateTime
+
+  @@index([billId])
+  @@map("payment_record")
+}
+
+model ParseJob {
+  id             String         @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdByUserId String?
+  status        ParseJobStatus @default(PENDING)
+  inputType     ParseInputType
+  rawInput      String?        @db.Text
+  extractedJson String?       @db.Text
+  errorMessage  String?
+  parserVersion String?
+  createdAt     DateTime
+  updatedAt     DateTime
+  completedAt   DateTime?
+  attachments   Attachment[]
+
+  @@index([workspaceId])
+  @@index([status])
+  @@map("parse_job")
+}
+
+model Attachment {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  billId      String?
+  bill        Bill?    @relation(fields: [billId], references: [id], onDelete: SetNull)
+  parseJobId  String?
+  parseJob    ParseJob? @relation(fields: [parseJobId], references: [id], onDelete: SetNull)
+  storageKey  String
+  fileName    String
+  mimeType    String?
+  fileSize    Int?
+  createdAt   DateTime
+
+  @@index([workspaceId])
+  @@index([billId])
+  @@index([parseJobId])
+  @@map("attachment")
+}
