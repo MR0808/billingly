@@ -41,16 +41,14 @@ export function AppShell({ workspace, user, children }: AppShellProps) {
         </nav>
         <div className="border-t border-border p-2 text-xs text-muted-foreground">
           <div className="truncate font-medium">{user.name ?? user.email}</div>
-          <button
-            type="button"
-            onClick={() => {
-              // Simple Phase 0: rely on Better Auth sign-out URL
-              window.location.href = "/api/auth/sign-out";
-            }}
-            className="mt-1 text-primary underline-offset-2 hover:underline"
-          >
-            Sign out
-          </button>
+          <form action="/api/auth/sign-out" method="post" className="mt-1">
+            <button
+              type="submit"
+              className="text-primary underline-offset-2 hover:underline"
+            >
+              Sign out
+            </button>
+          </form>
         </div>
       </aside>
       <div className="flex flex-1 flex-col">
